@@ -8,3 +8,4 @@ __pycache__/
 task_build/output_*/
 task_build/output_*/
 task_build/output_*/
+release/
