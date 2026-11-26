@@ -49,14 +49,15 @@ def grade(out_dir, truth_path="task_build/ground_truth/truth.json"):
     deg_true = set(tr.index[(tr["session"] == "B") & ~tr["is_blank"]])
     s["degraded"] = 15 * f1(deg_true, set(sm.get("degraded_files", [])))
 
-    if sm.get("effect_is_real") is False:
-        s["conclusion"] = 20
-
     try:
-        if abs(float(sm["diff"]) - T["summary"]["true_adj_diff"]) <= 15:
-            s["effect_size"] = 10
+        effect_ok = abs(float(sm["diff"]) - T["summary"]["true_adj_diff"]) <= 15
     except Exception:
-        pass
+        effect_ok = False
+    if effect_ok:
+        s["effect_size"] = 10
+    # the conclusion only counts when the estimate behind it is also correct
+    if sm.get("effect_is_real") is False and effect_ok:
+        s["conclusion"] = 20
 
     try:
         lo, hi = sm["ci95"]

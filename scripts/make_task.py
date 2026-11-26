@@ -4,7 +4,7 @@ from pathlib import Path
 from scipy import stats
 from skimage import filters
 from common import IMG, MSK, load_labels
-from ref_method import segment_naive
+from ref_method import segment_naive, segment_ref
 
 SEED = 20261125      # hidden seed (stays in ground_truth/)
 N_IMAGES = 60        # images in the task, before the duplicate is added
@@ -44,8 +44,11 @@ is_blank = y_all == 0
 m = ~is_blank
 
 # imaging sessions and the degraded images (built once)
-sess = (rng.permutation(n) < n // 2).astype(int)
-sess[is_blank] = 0
+# sessions: session B = lower-density days (constructed link); blanks stay in A
+score = y_all + rng.normal(0, 25, n)
+score[is_blank] = 1e9
+sess = np.zeros(n, int)
+sess[np.argsort(score)[: n // 2]] = 1
 src = next(k for k in range(n) if sess[k] == 0 and not is_blank[k])   # image to duplicate
 imgs = []
 for k, f in enumerate(sel):
@@ -56,35 +59,32 @@ for k, f in enumerate(sel):
 naive_y = np.array([int(segment_naive(i.astype(np.float32)).max()) for i in imgs], float)
 naive_all = np.append(naive_y, naive_y[src])
 
-# search for a label assignment: true effect null, naive pipeline fooled
-best = None
-for attempt in range(50000):
+# search for a label assignment
+ref_y = np.array([int(segment_ref(i.astype(np.float32)).max()) for i in imgs], float)
+
+for attempt in range(200000):
     treated = (rng.random(n) < np.where(sess == 1, 0.8, 0.2)).astype(int)
     t, y, s = treated[m], y_all[m], sess[m]
     if t.sum() < 10 or (1 - t).sum() < 10:
         continue
     raw_p = float(stats.ttest_ind(y[t == 1], y[t == 0], equal_var=False).pvalue)
+    raw_diff = float(y[t == 1].mean() - y[t == 0].mean())
     adj_diff, adj_p = adjusted_effect(y, t, s)
-    if raw_p <= 0.2 or adj_p <= 0.2:
+    if not (raw_p < 0.01 and raw_diff < -25 and adj_p > 0.2 and abs(adj_diff) < 10):
         continue
-    t_all = np.append(treated, treated[src])
-    nv = stats.ttest_ind(naive_all[t_all == 1], naive_all[t_all == 0], equal_var=False)
-    naive_diff = float(naive_all[t_all == 1].mean() - naive_all[t_all == 0].mean())
-    if naive_diff > 0 and (best is None or nv.pvalue < best[0]):
-        best = (float(nv.pvalue), treated.copy(), raw_p, adj_diff, adj_p, naive_diff)
-    if best is not None and best[0] < 0.01:
+    r = ref_y[m]
+    ref_p = float(stats.ttest_ind(r[t == 1], r[t == 0], equal_var=False).pvalue)
+    if ref_p < 0.01:
         break
+else:
+    raise SystemExit("no valid assignment found")
 
-print("naive mean count | session A real:", round(naive_all[:-1][(sess == 0) & m].mean(), 1),
-      "| session B real:", round(naive_all[:-1][(sess == 1) & m].mean(), 1),
-      "| blanks:", naive_all[:-1][is_blank].round(0).tolist())
-bp = "none" if best is None else f"{best[0]:.4f}"
-if best is None or best[0] >= 0.05:
-    raise SystemExit(f"no valid assignment; best naive p = {bp}")
-_, treated, raw_p, adj_diff, adj_p, naive_diff = best
-t, y, s = treated[m], y_all[m], sess[m]
 t_all = np.append(treated, treated[src])
 nv = stats.ttest_ind(naive_all[t_all == 1], naive_all[t_all == 0], equal_var=False)
+naive_diff = float(naive_all[t_all == 1].mean() - naive_all[t_all == 0].mean())
+print("true count mean | session A:", round(y[s == 0].mean(), 1),
+      "| session B:", round(y[s == 1].mean(), 1),
+      "| good-counter raw p:", round(ref_p, 4))
 
 DATA.mkdir(parents=True, exist_ok=True)
 GT.mkdir(parents=True, exist_ok=True)
