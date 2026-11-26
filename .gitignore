@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 *.zip
 *.tif
+task_build/output_*/
+task_build/output_*/
+task_build/output_*/
